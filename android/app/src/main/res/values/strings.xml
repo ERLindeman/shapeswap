@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Shape Swap</string>
+    <string name="title_activity_main">Shape Swap</string>
+    <string name="package_name">com.lndmn.shapeswap</string>
+    <string name="custom_url_scheme">com.lndmn.shapeswap</string>
+</resources>

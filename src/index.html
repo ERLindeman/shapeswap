@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Awesome Capacitor App</title>
+  <meta name="viewport"
+    content="viewport-fit=cover, width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="format-detection" content="telephone=no" />
+  <meta name="msapplication-tap-highlight" content="no" />
+
+  <script type="module"
+    src="https://unpkg.com/@ionic/pwa-elements@latest/dist/ionicpwaelements/ionicpwaelements.esm.js"></script>
+  <script nomodule
+    src="https://unpkg.com/@ionic/pwa-elements@latest/dist/ionicpwaelements/ionicpwaelements.js"></script>
+
+  <link rel="icon" type="image/x-icon" href="./assets/icon/favicon.ico" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="stylesheet" href="./css/style.css" />
+  <meta name="theme-color" content="#31d53d" />
+</head>
+
+<body>
+  <canvas id="stage" width="1920" height="1080"></canvas>
+  <script type="module">
+    import { StatusBar } from '@capacitor/status-bar';
+    StatusBar.hide().catch(() => { });
+  </script>
+  <script>
+    (function () {
+      'use strict';
+
+      const canvas = document.getElementById('stage');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { document.title = 'Shape Swap'; return; }
+
+      // Config
+      const ROWS = 8, COLS = 8;
+      const COLORS = { red: '#ff5d73', green: '#48e07a', blue: '#5db7ff', yellow: '#ffd166', orange: '#ff9950' };
+      const COLOR_KEYS = Object.keys(COLORS);
+      const SHAPES = ['circle', 'square', 'triangle'];
+      const FALL_SPEED_PX_PER_MS = 0.7;
+      const FX_DURATION_MS = 220;   // identical-group vanish
+      const GLOBAL_FLASH_MS = 300;  // per-flash duration for extinction bonus
+
+      // State
+      let board = [];
+      let W = innerWidth, H = innerHeight, tileSize = 64, gridX = 0, gridY = 0;
+      let sel = null;
+      let score = 0, best = 0, hasStarted = false;
+
+      // FX
+      let fxVanishing = [];       // [{r,c,start}]
+      let globalFlashStart = 0;   // timestamp
+      let globalFlashCount = 0;   // number of flashes, 2
+
+      // Persistence
+      try { best = Math.max(0, Number(localStorage.getItem('grid-best') || '0') || 0); } catch { best = 0; }
+      document.title = 'Shape Swap';
+
+      // Clock
+      let last = performance.now();
+
+      // RNG helpers
+      function randInt(n) { return Math.floor(Math.random() * n); }
+      function makeTile(color, shape) { return { color, shape, falling: false, fallY: 0 }; }
+      function randTile() { return makeTile(COLOR_KEYS[randInt(COLOR_KEYS.length)], SHAPES[randInt(SHAPES.length)]); }
+      function saveBest() { try { localStorage.setItem('grid-best', String(best)); } catch { } }
+
+      // Extinction bonus: 1->1k, 2->10k, 3->100k, 4->1M
+      function extinctionBonus(k) { return k > 0 ? Math.pow(10, k + 2) : 0; }
+
+      // Setup and sizing
+      function reset() {
+        score = 0; hasStarted = false; fxVanishing = []; globalFlashStart = 0; globalFlashCount = 0;
+        board = Array.from({ length: ROWS }, () => Array.from({ length: COLS }, () => randTile()));
+        // Clean initial board without scoring or animation
+        while (findMatches().length) { processMatches(false, false); applyGravity(false); refill(false); }
+        render();
+      }
+
+      function resize() {
+        const pad = 20;
+        W = innerWidth; H = innerHeight;
+        const sizeW = Math.floor((W - pad * 2) / COLS);
+        const sizeH = Math.floor((H - pad * 2) / ROWS);
+        tileSize = Math.max(32, Math.min(sizeW, sizeH));
+        const gridW = COLS * tileSize, gridH = ROWS * tileSize;
+        gridX = Math.floor((W - gridW) / 2);
+        gridY = Math.floor((H - gridH) / 2);
+        const dpr = devicePixelRatio || 1;
+        canvas.width = Math.max(1, Math.floor(W * dpr));
+        canvas.height = Math.max(1, Math.floor(H * dpr));
+        canvas.style.width = W + 'px';
+        canvas.style.height = H + 'px';
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        render();
+      }
+
+      // Input mapping
+      function screenToCell(px, py) {
+        const c = Math.floor((px - gridX) / tileSize);
+        const r = Math.floor((py - gridY) / tileSize);
+        if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return null;
+        return { r, c };
+      }
+
+      // Physics state checks
+      function anyFalling() {
+        for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+          const t = board[r] && board[r][c]; if (t && t.falling) return true;
+        }
+        return false;
+      }
+
+      // Selection: invalid second pick re-anchors selection to the most recent tile
+      function handleSelect(r, c) {
+        if (anyFalling() || fxVanishing.length || globalFlashStart) return;
+
+        if (!sel) { sel = { r, c }; render(); return; }
+
+        const a = sel;
+        const b = { r, c };
+        const ta = board[a.r] && board[a.r][a.c];
+        const tb = board[b.r] && board[b.r][b.c];
+
+        // Same tile; keep selection anchored to it
+        if (a.r === b.r && a.c === b.c) { sel = { r, c }; render(); return; }
+
+        // Missing tile safety
+        if (!ta || !tb) { sel = { r, c }; render(); return; }
+
+        // Shapes must match; if not, move selection to latest click
+        if (ta.shape !== tb.shape) { sel = { r, c }; render(); return; }
+
+        // Valid swap
+        board[a.r][a.c] = tb;
+        board[b.r][b.c] = ta;
+        sel = null;
+        hasStarted = true;
+        render();
+        resolveBoard();
+      }
+
+      // Match-finding by color adjacency (4+)
+      function findMatches() {
+        const seen = Array.from({ length: ROWS }, () => Array.from({ length: COLS }, () => false));
+        const groups = [];
+        const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (seen[r][c]) continue;
+            const t = board[r] && board[r][c];
+            if (!t) { seen[r][c] = true; continue; }
+            seen[r][c] = true;
+            const stack = [{ r, c }], cells = [{ r, c }];
+            while (stack.length) {
+              const cur = stack.pop(); if (!cur) break;
+              const tc = board[cur.r] && board[cur.r][cur.c]; if (!tc) continue;
+              for (const [dr, dc] of dirs) {
+                const nr = cur.r + dr, nc = cur.c + dc;
+                if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+                if (seen[nr][nc]) continue;
+                const tt = board[nr] && board[nr][nc];
+                if (tt && tt.color === t.color) {
+                  seen[nr][nc] = true;
+                  stack.push({ r: nr, c: nc });
+                  cells.push({ r: nr, c: nc });
+                }
+              }
+            }
+            if (cells.length >= 4) groups.push({ cells, color: t.color });
+          }
+        }
+        return groups;
+      }
+
+      // Clear groups; identical sets get bonus scoring and optional FX
+      function processMatches(countScore, animateIdentical) {
+        const groups = findMatches();
+        let pointsMixed = 0, identPoints = 0;
+        const identCells = [];
+
+        for (const g of groups) {
+          // Are all shapes identical inside this color group?
+          let uniformShape = true, shape0 = null;
+          for (const cell of g.cells) {
+            const t = board[cell.r] && board[cell.r][cell.c];
+            if (!t) continue;
+            if (shape0 === null) shape0 = t.shape;
+            if (t.shape !== shape0) { uniformShape = false; break; }
+          }
+
+          if (uniformShape) {
+            if (animateIdentical) {
+              for (const cell of g.cells) identCells.push({ r: cell.r, c: cell.c });
+              if (countScore) identPoints += 10 * g.cells.length;
+            } else {
+              for (const cell of g.cells) {
+                if (board[cell.r] && board[cell.r][cell.c]) board[cell.r][cell.c] = null;
+              }
+              if (countScore) identPoints += 10 * g.cells.length;
+            }
+          } else {
+            for (const cell of g.cells) {
+              if (board[cell.r] && board[cell.r][cell.c]) { board[cell.r][cell.c] = null; if (countScore) pointsMixed += 1; }
+            }
+          }
+        }
+
+        if (countScore && pointsMixed) {
+          score += pointsMixed;
+          if (score > best) { best = score; saveBest(); }
+        }
+
+        return { any: groups.length > 0, pointsMixed, identCells, identPoints };
+      }
+
+      // Gravity compacts columns; set falling offsets for animation
+      function applyGravity(animated = true) {
+        for (let c = 0; c < COLS; c++) {
+          let write = ROWS - 1;
+          for (let r = ROWS - 1; r >= 0; r--) {
+            const t = board[r] && board[r][c];
+            if (t) {
+              if (r !== write) {
+                board[write][c] = t; board[r][c] = null;
+                if (animated) { t.falling = true; t.fallY = -((write - r) * tileSize); }
+              }
+              write--;
+            }
+          }
+          for (let r = write; r >= 0; r--) { board[r][c] = null; }
+        }
+      }
+
+      // Spawn new tiles; stagger fall starts to prevent overlap
+      function refill(animated = true) {
+        for (let c = 0; c < COLS; c++) {
+          let spawnIndex = 0;
+          for (let r = 0; r < ROWS; r++) {
+            if (!board[r][c]) {
+              const t = randTile();
+              if (animated) {
+                t.falling = true;
+                t.fallY = -((r + spawnIndex + 1) * tileSize);
+                spawnIndex++;
+              } else {
+                t.falling = false; t.fallY = 0;
+              }
+              board[r][c] = t;
+            }
+          }
+        }
+      }
+
+      function waitUntilSettled() {
+        return new Promise(function (res) {
+          function check() { if (!anyFalling() && !fxVanishing.length && !globalFlashStart) res(); else requestAnimationFrame(check); }
+          requestAnimationFrame(check);
+        });
+      }
+
+      // Apply clears, gravity, refill; handle identical FX and extinction bonus
+      async function resolveBoard() {
+        let changed = false;
+        for (; ;) {
+          const res = processMatches(hasStarted, true);
+          if (!res.any) break;
+          changed = true;
+
+          // identical-group vanish: play FX, then remove, then award points
+          if (res.identCells.length) {
+            const now = performance.now();
+            fxVanishing = res.identCells.map(cell => ({ r: cell.r, c: cell.c, start: now }));
+            await new Promise(ok => setTimeout(ok, FX_DURATION_MS));
+            for (const cell of res.identCells) {
+              if (board[cell.r] && board[cell.r][cell.c]) board[cell.r][cell.c] = null;
+            }
+            fxVanishing = [];
+            if (hasStarted && res.identPoints) {
+              score += res.identPoints;
+              if (score > best) { best = score; saveBest(); }
+            }
+          }
+
+          applyGravity(true);
+          refill(true);
+          await waitUntilSettled();
+        }
+
+        // Extinction only if this move actually cleared something
+        if (hasStarted && changed) {
+          const extinct = extinctColors();
+          if (extinct.length) {
+            const bonus = extinctionBonus(extinct.length); // 1k, 10k, 100k, 1M
+            score += bonus;
+            if (score > best) { best = score; saveBest(); }
+            // two longer global flashes
+            globalFlashStart = performance.now();
+            globalFlashCount = 2;
+            await new Promise(ok => setTimeout(ok, GLOBAL_FLASH_MS * globalFlashCount));
+            globalFlashStart = 0;
+            globalFlashCount = 0;
+          }
+        }
+
+        if (changed) render();
+      }
+
+      function extinctColors() {
+        const present = new Set();
+        for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+          const t = board[r] && board[r][c]; if (t) present.add(t.color);
+        }
+        const out = [];
+        for (const k of COLOR_KEYS) { if (!present.has(k)) out.push(k); }
+        return out;
+      }
+
+      // Physics update with overlap-free fall
+      function update(dt) {
+        const vy = FALL_SPEED_PX_PER_MS * dt;
+
+        // integrate
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const t = board[r] && board[r][c];
+            if (!t || !t.falling) continue;
+            t.fallY = Math.min(0, t.fallY + vy);
+          }
+        }
+
+        // clamp bottom-to-top per column
+        for (let c = 0; c < COLS; c++) {
+          let limitY = gridY + ROWS * tileSize;
+          for (let r = ROWS - 1; r >= 0; r--) {
+            const baseY = gridY + r * tileSize;
+            const t = board[r] && board[r][c];
+
+            if (!t) { limitY = Math.min(limitY, baseY); continue; }
+
+            let y = baseY + (t.fallY || 0);
+            if (t.falling) {
+              const maxY = limitY - tileSize;
+              if (y > maxY) y = maxY;
+              t.fallY = y - baseY;
+              if (t.fallY >= 0) { t.fallY = 0; t.falling = false; }
+            } else { y = baseY; }
+            limitY = y;
+          }
+        }
+      }
+
+      // Color flash helpers
+      function hexToRgb(hex) {
+        const h = hex.replace('#', '');
+        const n = parseInt(h, 16);
+        if (h.length === 6) {
+          return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+        } else {
+          return { r: ((n >> 8) & 15) * 17, g: ((n >> 4) & 15) * 17, b: (n & 15) * 17 };
+        }
+      }
+      function rgbToHex(r, g, b) {
+        return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+      }
+      function mixHexToWhite(hex, t) {
+        const c = hexToRgb(hex);
+        const r = Math.round(c.r + (255 - c.r) * t);
+        const g = Math.round(c.g + (255 - c.g) * t);
+        const b = Math.round(c.b + (255 - c.b) * t);
+        return rgbToHex(r, g, b);
+      }
+
+      // Render
+      function render() {
+        const now = performance.now();
+
+        // identical vanish progress per-cell
+        const fxMap = {};
+        for (const f of fxVanishing) {
+          const k = f.r + ',' + f.c;
+          fxMap[k] = Math.min(1, (now - f.start) / FX_DURATION_MS);
+        }
+
+        // extinction global flash progress 0..1, repeated
+        let globalFlash = 0;
+        if (globalFlashStart) {
+          const elapsed = now - globalFlashStart;
+          const total = GLOBAL_FLASH_MS * (globalFlashCount || 1);
+          if (elapsed >= total) {
+            globalFlashStart = 0;
+            globalFlashCount = 0;
+          } else {
+            const phase = (elapsed % GLOBAL_FLASH_MS) / GLOBAL_FLASH_MS;
+            globalFlash = 1 - Math.abs(1 - 2 * phase);
+          }
+        }
+
+        ctx.clearRect(0, 0, W, H);
+
+        // grid (drawn before HUD bar so bar sits above)
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        for (let i = 0; i <= COLS; i++) {
+          ctx.beginPath(); ctx.moveTo(gridX + i * tileSize, gridY); ctx.lineTo(gridX + i * tileSize, gridY + ROWS * tileSize); ctx.stroke();
+        }
+        for (let j = 0; j <= ROWS; j++) {
+          ctx.beginPath(); ctx.moveTo(gridX, gridY + j * tileSize); ctx.lineTo(gridX + COLS * tileSize, gridY + j * tileSize); ctx.stroke();
+        }
+
+        // tiles (behind HUD bar)
+        for (let r = 0; r < ROWS; r++) {
+          const row = board[r] || [];
+          for (let c = 0; c < COLS; c++) {
+            const t = row[c]; if (!t) continue;
+
+            const baseX = gridX + c * tileSize;
+            const baseY = gridY + r * tileSize + (t.fallY || 0);
+            const baseW = tileSize - 4, baseH = tileSize - 4;
+
+            const key = r + ',' + c;
+            const fx = fxMap[key];
+
+            let x = baseX, y = baseY, w = baseW, h = baseH, alpha = 1;
+            let fillHex = COLORS[t.color];
+
+            // extinction tint
+            if (globalFlash > 0) fillHex = mixHexToWhite(fillHex, globalFlash);
+
+            // identical vanish phases
+            if (fx !== undefined) {
+              if (fx < 0.4) {
+                const p = fx / 0.4;
+                const wave = 1 - Math.abs(1 - 2 * p);
+                fillHex = mixHexToWhite(fillHex, wave);
+              } else {
+                const k = (fx - 0.4) / 0.6;
+                const scale = 1 - 0.6 * k;
+                alpha = 1 - 0.8 * k;
+                const cx0 = gridX + c * tileSize + tileSize / 2;
+                const cy0 = baseY + tileSize / 2;
+                const newW = baseW * scale, newH = baseH * scale;
+                x = cx0 - newW / 2; y = cy0 - newH / 2; w = newW; h = newH;
+              }
+            }
+
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = fillHex;
+            ctx.fillRect(x + 2, y + 2, w, h);
+
+            // shape hole
+            const cx = gridX + c * tileSize + tileSize / 2;
+            const cy = baseY + tileSize / 2;
+            let holeScale = 1;
+            if (fx !== undefined && fx >= 0.4) {
+              const k = (fx - 0.4) / 0.6; holeScale = 1 - 0.6 * k;
+            }
+            const s = (tileSize * 0.28) * holeScale;
+            ctx.fillStyle = '#0b0f18';
+            if (t.shape === 'circle') { ctx.beginPath(); ctx.arc(cx, cy, s, 0, Math.PI * 2); ctx.fill(); }
+            else if (t.shape === 'square') { ctx.fillRect(cx - s, cy - s, s * 2, s * 2); }
+            else { ctx.beginPath(); ctx.moveTo(cx, cy - s); ctx.lineTo(cx + s, cy + s); ctx.lineTo(cx - s, cy + s); ctx.closePath(); ctx.fill(); }
+            ctx.restore();
+
+            // selection ring
+            if (sel && sel.r === r && sel.c === c) {
+              ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 3;
+              ctx.strokeRect(gridX + c * tileSize + 3, gridY + r * tileSize + 3, tileSize - 6, tileSize - 6);
+            }
+          }
+        }
+
+        // HUD bar drawn last so it masks falling tiles above the grid
+        const fontSize = Math.max(16, Math.floor(tileSize * 0.5));
+        const lineHeight = Math.floor(fontSize * 1.2);
+        const gap = Math.floor(lineHeight * 0.25); // quarter line-height gap to grid
+        const textBaselineY = gridY - gap;
+
+        ctx.save();
+        // black bar from top of canvas to top edge of grid
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, W, gridY);
+
+        // scores inside the bar
+        ctx.font = `700 ${fontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillStyle = 'rgba(255,255,255,0.95)';
+
+        // left: Score
+        ctx.textAlign = 'left';
+        ctx.fillText(`Score ${score}`, gridX, textBaselineY);
+
+        // right: High
+        ctx.textAlign = 'right';
+        ctx.fillText(`High ${best}`, gridX + COLS * tileSize, textBaselineY);
+        ctx.restore();
+      }
+
+      // Events
+      canvas.addEventListener('pointerdown', function (e) {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left, y = e.clientY - rect.top;
+        const cell = screenToCell(x, y);
+        if (!cell) return;
+        handleSelect(cell.r, cell.c);
+      });
+      addEventListener('resize', resize);
+
+      // Loop
+      function tick(now) {
+        const dt = Math.min(32, now - last); last = now;
+        update(dt); render();
+        requestAnimationFrame(tick);
+      }
+
+      // Init
+      reset();
+      resize();
+      requestAnimationFrame(function (t) { last = t; requestAnimationFrame(tick); });
+    })();
+  </script>
+  <script src="./js/capacitor-welcome.js" type="module"></script>
+</body>
+
+</html>

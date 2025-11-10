@@ -25,7 +25,7 @@ window.customElements.define(
       .button {
         display: inline-block;
         padding: 10px;
-        background-color: #73B5F6;
+        background-color: #000;
         color: #fff;
         font-size: 0.9em;
         border: 0;
@@ -125,7 +125,7 @@ window.customElements.define(
         display: block;
         padding: 15px 15px 15px 15px;
         text-align: center;
-        background-color: #73B5F6;
+        background-color: #000;
       }
       ::slotted(h1) {
         margin: 0;

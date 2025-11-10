@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8" />
-  <title>Awesome Capacitor App</title>
+  <title>Shape Swap</title>
   <meta name="viewport"
     content="viewport-fit=cover, width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="format-detection" content="telephone=no" />
@@ -17,7 +17,7 @@
   <link rel="icon" type="image/x-icon" href="./assets/icon/favicon.ico" />
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./css/style.css" />
-  <meta name="theme-color" content="#31d53d" />
+  <meta name="theme-color" content="#000" />
 </head>
 
 <body>
@@ -398,6 +398,7 @@
           }
         }
 
+        ctx.fillStyle = '#000';
         ctx.clearRect(0, 0, W, H);
 
         // grid (drawn before HUD bar so bar sits above)
@@ -458,7 +459,7 @@
               const k = (fx - 0.4) / 0.6; holeScale = 1 - 0.6 * k;
             }
             const s = (tileSize * 0.28) * holeScale;
-            ctx.fillStyle = '#0b0f18';
+            ctx.fillStyle = '#000';
             if (t.shape === 'circle') { ctx.beginPath(); ctx.arc(cx, cy, s, 0, Math.PI * 2); ctx.fill(); }
             else if (t.shape === 'square') { ctx.fillRect(cx - s, cy - s, s * 2, s * 2); }
             else { ctx.beginPath(); ctx.moveTo(cx, cy - s); ctx.lineTo(cx + s, cy + s); ctx.lineTo(cx - s, cy + s); ctx.closePath(); ctx.fill(); }

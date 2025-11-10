@@ -1,4 +1,16 @@
 html,
 body {
+  margin: 0;
+  padding: 0;
   padding-top: env(safe-area-inset-top);
+  background-color: #000;
+  /* <- force black background */
+  height: 100%;
+}
+
+/* Make the canvas fill the viewport and avoid any stray margins */
+canvas#stage {
+  display: block;
+  width: 100vw;
+  height: 100vh;
 }

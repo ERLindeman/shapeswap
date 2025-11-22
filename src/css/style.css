@@ -22,6 +22,17 @@ canvas#stage {
   height: 100%;
 }
 
+#ad-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  pointer-events: auto;
+}
+
 #pause-btn {
   position: absolute;
   left: 50%;

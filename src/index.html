@@ -21,10 +21,13 @@
 </head>
 
 <body>
-  <canvas id="stage" width="1920" height="1080"></canvas>
+  <div id="stage-wrap">
+    <canvas id="stage" width="1920" height="1080"></canvas>
+    <button id="pause-btn">Pause</button>
+  </div>
   <div id="pause-overlay" hidden aria-hidden="true">
     <div class="pause-card">
-      <h1>Paused</h1>
+      <h1>Shape Swap</h1>
       <p class="pause-summary">
         Tap any two tiles of the same shape to swap.<br>
         Make groups of 4+ matching colors to score.<br>
@@ -32,7 +35,8 @@
         Wipe every tile of a color to trigger huge bonus.
       </p>
       <div class="pause-actions">
-        <button id="pause-resume">Resume</button>
+        <button id="pause-resume">Continue</button>
+        <button id="pause-reset">Reset Game</button>
       </div>
     </div>
   </div>
@@ -47,8 +51,10 @@
       const canvas = document.getElementById('stage');
       const ctx = canvas.getContext('2d');
       if (!ctx) { document.title = 'Shape Swap'; return; }
+      const pauseButton = document.getElementById('pause-btn');
       const overlay = document.getElementById('pause-overlay');
       const pauseResumeBtn = document.getElementById('pause-resume');
+      const pauseResetBtn = document.getElementById('pause-reset');
 
       // Config
       const ROWS = 8, COLS = 8;
@@ -63,7 +69,7 @@
       let board = [];
       let W = innerWidth, H = innerHeight, tileSize = 64, gridX = 0, gridY = 0;
       let sel = null;
-      let score = 0, best = 0, hasStarted = false;
+      let score = 0, life = 0, hasStarted = false;
       let paused = false;
 
       // FX
@@ -72,7 +78,11 @@
       let globalFlashCount = 0;   // number of flashes, 2
 
       // Persistence
-      try { best = Math.max(0, Number(localStorage.getItem('grid-best') || '0') || 0); } catch { best = 0; }
+      try {
+        const storedLife = Number(localStorage.getItem('grid-life') || '0');
+        const legacyHigh = Number(localStorage.getItem('grid-best') || '0'); // migrate old high score
+        life = Math.max(0, storedLife, legacyHigh);
+      } catch { life = 0; }
       document.title = 'Shape Swap';
 
       // Clock
@@ -82,7 +92,13 @@
       function randInt(n) { return Math.floor(Math.random() * n); }
       function makeTile(color, shape) { return { color, shape, falling: false, fallY: 0 }; }
       function randTile() { return makeTile(COLOR_KEYS[randInt(COLOR_KEYS.length)], SHAPES[randInt(SHAPES.length)]); }
-      function saveBest() { try { localStorage.setItem('grid-best', String(best)); } catch { } }
+      function saveLife() { try { localStorage.setItem('grid-life', String(life)); } catch { } }
+      function addPoints(amount) {
+        if (!amount) return;
+        score += amount;
+        life += amount;
+        saveLife();
+      }
 
       // Pause handling
       function showPause(reason = 'input') { // reason aids debugging if needed
@@ -92,6 +108,7 @@
           overlay.hidden = false;
           overlay.setAttribute('aria-hidden', 'false');
         }
+        if (pauseButton) pauseButton.style.display = 'none';
       }
       function hidePause() {
         if (!paused) return;
@@ -100,6 +117,7 @@
           overlay.hidden = true;
           overlay.setAttribute('aria-hidden', 'true');
         }
+        if (pauseButton) pauseButton.style.display = '';
       }
       function togglePause(reason = 'input') {
         if (paused) { hidePause(); } else { showPause(reason); }
@@ -252,10 +270,7 @@
           }
         }
 
-        if (countScore && pointsMixed) {
-          score += pointsMixed;
-          if (score > best) { best = score; saveBest(); }
-        }
+        if (countScore && pointsMixed) addPoints(pointsMixed);
 
         return { any: groups.length > 0, pointsMixed, identCells, identPoints };
       }
@@ -322,10 +337,7 @@
               if (board[cell.r] && board[cell.r][cell.c]) board[cell.r][cell.c] = null;
             }
             fxVanishing = [];
-            if (hasStarted && res.identPoints) {
-              score += res.identPoints;
-              if (score > best) { best = score; saveBest(); }
-            }
+            if (hasStarted && res.identPoints) addPoints(res.identPoints);
           }
 
           applyGravity(true);
@@ -338,8 +350,7 @@
           const extinct = extinctColors();
           if (extinct.length) {
             const bonus = extinctionBonus(extinct.length); // 1k, 10k, 100k, 1M
-            score += bonus;
-            if (score > best) { best = score; saveBest(); }
+            addPoints(bonus);
             // two longer global flashes
             globalFlashStart = performance.now();
             globalFlashCount = 2;
@@ -533,13 +544,13 @@
         ctx.textBaseline = 'alphabetic';
         ctx.fillStyle = 'rgba(255,255,255,0.95)';
 
-        // left: Score
+        // left: Game score
         ctx.textAlign = 'left';
-        ctx.fillText(`Score ${score}`, gridX, textBaselineY);
+        ctx.fillText(`Game ${score}`, gridX, textBaselineY);
 
-        // right: High
+        // right: Lifetime score
         ctx.textAlign = 'right';
-        ctx.fillText(`High ${best}`, gridX + COLS * tileSize, textBaselineY);
+        ctx.fillText(`Life ${life}`, gridX + COLS * tileSize, textBaselineY);
         ctx.restore();
       }
 
@@ -557,7 +568,9 @@
         if (e.metaKey || e.ctrlKey || e.altKey) return;
         togglePause('keyboard');
       });
+      if (pauseButton) pauseButton.addEventListener('click', function () { showPause('button'); });
       if (pauseResumeBtn) pauseResumeBtn.addEventListener('click', function () { hidePause(); });
+      if (pauseResetBtn) pauseResetBtn.addEventListener('click', function () { reset(); });
       // Trap browser/soft back to open pause instead of leaving the game.
       try { history.pushState({ pauseTrap: true }, document.title, location.href); } catch { }
       addEventListener('popstate', function () {
@@ -577,6 +590,7 @@
       // Init
       reset();
       resize();
+      showPause('startup');
       requestAnimationFrame(function (t) { last = t; requestAnimationFrame(tick); });
     })();
   </script>

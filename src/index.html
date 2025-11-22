@@ -22,6 +22,20 @@
 
 <body>
   <canvas id="stage" width="1920" height="1080"></canvas>
+  <div id="pause-overlay" hidden aria-hidden="true">
+    <div class="pause-card">
+      <h1>Paused</h1>
+      <p class="pause-summary">
+        Tap any two tiles of the same shape to swap.<br>
+        Make groups of 4+ matching colors to score.<br>
+        Identical-shape groups earn bonuses.<br>
+        Wipe every tile of a color to trigger huge bonus.
+      </p>
+      <div class="pause-actions">
+        <button id="pause-resume">Resume</button>
+      </div>
+    </div>
+  </div>
   <script type="module">
     import { StatusBar } from '@capacitor/status-bar';
     StatusBar.hide().catch(() => { });
@@ -33,6 +47,8 @@
       const canvas = document.getElementById('stage');
       const ctx = canvas.getContext('2d');
       if (!ctx) { document.title = 'Shape Swap'; return; }
+      const overlay = document.getElementById('pause-overlay');
+      const pauseResumeBtn = document.getElementById('pause-resume');
 
       // Config
       const ROWS = 8, COLS = 8;
@@ -48,6 +64,7 @@
       let W = innerWidth, H = innerHeight, tileSize = 64, gridX = 0, gridY = 0;
       let sel = null;
       let score = 0, best = 0, hasStarted = false;
+      let paused = false;
 
       // FX
       let fxVanishing = [];       // [{r,c,start}]
@@ -67,11 +84,33 @@
       function randTile() { return makeTile(COLOR_KEYS[randInt(COLOR_KEYS.length)], SHAPES[randInt(SHAPES.length)]); }
       function saveBest() { try { localStorage.setItem('grid-best', String(best)); } catch { } }
 
+      // Pause handling
+      function showPause(reason = 'input') { // reason aids debugging if needed
+        if (paused) return;
+        paused = true;
+        if (overlay) {
+          overlay.hidden = false;
+          overlay.setAttribute('aria-hidden', 'false');
+        }
+      }
+      function hidePause() {
+        if (!paused) return;
+        paused = false;
+        if (overlay) {
+          overlay.hidden = true;
+          overlay.setAttribute('aria-hidden', 'true');
+        }
+      }
+      function togglePause(reason = 'input') {
+        if (paused) { hidePause(); } else { showPause(reason); }
+      }
+
       // Extinction bonus: 1->1k, 2->10k, 3->100k, 4->1M
       function extinctionBonus(k) { return k > 0 ? Math.pow(10, k + 2) : 0; }
 
       // Setup and sizing
       function reset() {
+        hidePause();
         score = 0; hasStarted = false; fxVanishing = []; globalFlashStart = 0; globalFlashCount = 0;
         board = Array.from({ length: ROWS }, () => Array.from({ length: COLS }, () => randTile()));
         // Clean initial board without scoring or animation
@@ -81,7 +120,11 @@
 
       function resize() {
         const pad = 20;
-        W = innerWidth; H = innerHeight;
+        const viewportW = innerWidth;
+        const viewportH = innerHeight;
+        // Enforce at least 4:3 vertical aspect for the playfield area
+        const targetW = Math.min(viewportW, viewportH * 0.75);
+        W = targetW; H = viewportH;
         const sizeW = Math.floor((W - pad * 2) / COLS);
         const sizeH = Math.floor((H - pad * 2) / ROWS);
         tileSize = Math.max(32, Math.min(sizeW, sizeH));
@@ -115,6 +158,7 @@
 
       // Selection: invalid second pick re-anchors selection to the most recent tile
       function handleSelect(r, c) {
+        if (paused) return;
         if (anyFalling() || fxVanishing.length || globalFlashStart) return;
 
         if (!sel) { sel = { r, c }; render(); return; }
@@ -508,12 +552,25 @@
         if (!cell) return;
         handleSelect(cell.r, cell.c);
       });
+      addEventListener('keydown', function (e) {
+        // Do not hijack modifier shortcuts; any other key toggles pause.
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        togglePause('keyboard');
+      });
+      if (pauseResumeBtn) pauseResumeBtn.addEventListener('click', function () { hidePause(); });
+      // Trap browser/soft back to open pause instead of leaving the game.
+      try { history.pushState({ pauseTrap: true }, document.title, location.href); } catch { }
+      addEventListener('popstate', function () {
+        showPause('back');
+        try { history.pushState({ pauseTrap: true }, document.title, location.href); } catch { }
+      });
       addEventListener('resize', resize);
 
       // Loop
       function tick(now) {
         const dt = Math.min(32, now - last); last = now;
-        update(dt); render();
+        if (!paused) update(dt);
+        render();
         requestAnimationFrame(tick);
       }
 

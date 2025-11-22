@@ -23,7 +23,7 @@
 <body>
   <div id="stage-wrap">
     <canvas id="stage" width="1920" height="1080"></canvas>
-    <button id="pause-btn">Pause</button>
+    <button id="pause-btn" aria-label="Pause">⏸</button>
   </div>
   <div id="pause-overlay" hidden aria-hidden="true">
     <div class="pause-card">
@@ -136,6 +136,14 @@
         render();
       }
 
+      function positionPauseButton() {
+        if (!pauseButton) return;
+        const margin = Math.max(8, Math.round(tileSize * 0.1));
+        const gridBottom = gridY + ROWS * tileSize;
+        pauseButton.style.top = (gridBottom + margin) + 'px';
+        pauseButton.style.bottom = 'auto';
+      }
+
       function resize() {
         const pad = 20;
         const viewportW = innerWidth;
@@ -156,6 +164,7 @@
         canvas.style.height = H + 'px';
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         render();
+        positionPauseButton();
       }
 
       // Input mapping

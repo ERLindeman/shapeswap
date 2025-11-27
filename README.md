@@ -1,6 +1,6 @@
 # Shape Swap
 
-Shape Swap is a Capacitor/Vite canvas puzzle game built for mobile and web. Swap adjacent tiles of the same shape to make color groups, rack up points, and chase extinction bonuses—all while the app runs full-screen with Capacitor extras like the status bar hide.
+Shape Swap is a Capacitor/Vite canvas puzzle game built for mobile and web. Swap adjacent tiles of the same shape to make color groups and rack up points.
 
 ## Gameplay
 - Swap any two tiles that share the same shape.
@@ -19,7 +19,6 @@ npm start        # runs Vite dev server
 
 ## Platform notes
 - Built with Capacitor 7 and Vite. Android/iOS projects live in `android/` and `ios/`.
-- Status bar is hidden on start via `@capacitor/status-bar`.
 - Local storage persists lifetime score (`grid-life`) across runs; legacy `grid-best` is migrated on load.
 
 ## Controls
